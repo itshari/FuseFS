@@ -4,9 +4,11 @@ from __future__ import print_function, absolute_import, division
 import logging
 
 import xmlrpclib
+import socket
 import sys
 import pickle
 import math
+import hashlib
 
 from xmlrpclib import Binary
 from collections import defaultdict
@@ -17,7 +19,7 @@ from time import time
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
-BLOCK_SIZE = 512
+BLOCK_SIZE = 4
 REPLICATION = 2
 
 ''' Class to handle the file content as an array of strings '''
@@ -37,6 +39,8 @@ class Filecontent():
 
     ''' This function traverses through the blocks and writes the given data at the particular offset '''
     def write_into_blocks(self, data, offset): 
+	while any((d.is_alive() is False) for d in self.ds):	
+	    pass	
 	blk_index = offset//BLOCK_SIZE
 	pos = offset%BLOCK_SIZE
 	while (len(data) > 0):
@@ -79,27 +83,42 @@ class Filecontent():
 	return size, cont
 
     ''' This function fetches the given index of block from the corresponding data server '''
-    def get_block(self, index):
-	blk = self.ds[(self.ds_start_index+index)%len(self.ds)].get(str(self.node_id)+"%%%"+str(index))
-	if (blk != "None--Empty"):
-	    return blk.data 
-	else:
-	    return -1
+    def get_block(self, index):	
+	block = -1
+	for i in range(REPLICATION):
+	    dataserver = (self.ds_start_index+i+index)%len(self.ds)
+	    if self.ds[dataserver].is_alive() is True:
+	        d = self.ds[dataserver].get((str(self.node_id)+"%%%"+str(index)), i)
+	        if (d != "None--Empty"):	        
+		    data = pickle.loads(d.data)
+		    chksum = self.calc_chksum(data[0])	
+		    if chksum != data[1]:
+			print (self.path, " has been corrupted")
+		    else:
+			block = data[0]
+	return block
 	
     ''' This function updates the given index of block in the corresponding data server '''
     def set_block(self, index, block_data):  
+	chksum = self.calc_chksum(block_data)
+	data = (block_data, chksum)	
 	for i in range(REPLICATION):
-  	    self.ds[(self.ds_start_index+i+index)%len(self.ds)].put((str(self.node_id)+"%%%"+str(index)), block_data)
+  	    self.ds[(self.ds_start_index+i+index)%len(self.ds)].put((str(self.node_id)+"%%%"+str(index)), pickle.dumps(data), i)
  
     ''' This function deletes the given index of block from the corresponding data server '''
     def delete_block(self, index):
-	return self.ds[(self.ds_start_index+index)%len(self.ds)].delete(str(self.node_id)+"%%%"+str(index)) 
+	for i in range(REPLICATION):	
+	    return self.ds[(self.ds_start_index+i+index)%len(self.ds)].delete((str(self.node_id)+"%%%"+str(index)), i) 
 	
     ''' This function deletes the given file from all data servers '''
     def delete_file(self):
 	for ds in self.ds:
 	    ds.delete_key_contains(str(self.node_id)+"%%%")	
-	return self  
+
+    def calc_chksum(self, block_data):
+        m = hashlib.md5()
+	m.update(block_data)
+	return m.hexdigest() 
 	    
 	
 ''' A class to represent any node (file/directory) present in the filesystem'''
@@ -179,24 +198,45 @@ def split_parent_and_file(path):
 class Server(): 
 
     def __init__(self, port):
+	self.port = port	
 	self.connection = xmlrpclib.ServerProxy('http://localhost:'+port)
 
-    def put(self, key, value):
-	self.connection.put(Binary(key), Binary(value))
+    def is_alive(self):
+	msg = 12345
+	res = -1
+	try:
+	    res = self.connection.is_alive(msg)
+	    if res == msg:
+		return True
+	except socket.error:
+	    print("^^^^^^^ Server is down, port: ", self.port)	    
+	return False
 
-    def get(self, key):
-	return self.connection.get(Binary(key))
+    def put(self, key, value, i=None):	
+	if i is None:
+	    return self.connection.put(Binary(key), Binary(value))
+	else:
+	    return self.connection.put(i, Binary(key), Binary(value))
 
-    def delete(self, key):
-	return self.connection.delete(Binary(key))
+    def get(self, key, i=None):		
+	if i is None:
+	    return self.connection.get(Binary(key))
+	else:
+	    return self.connection.get(i, Binary(key))
+
+    def delete(self, key, i=None):	
+	if i is None:
+	    return self.connection.delete(Binary(key))
+	else:
+	    return self.connection.delete(i, Binary(key))
 
     def delete_key_contains(self, key):
 	return self.connection.delete_key_contains(Binary(key))
 
-    def get_new_fd(self):
+    def get_new_fd(self):		
 	return self.connection.get_new_fd()
 
-    def get_new_id(self):
+    def get_new_id(self):	
 	return self.connection.get_new_id()
     
 	      

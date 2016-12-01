@@ -41,6 +41,9 @@ class SimpleHT:
   def count(self):
     return len(self.data)
 
+  def is_alive(self, msg):
+    return msg
+
   # Returns a unique id for every new node created in the file system
   def get_new_id(self):
     self.node_unique_id = self.node_unique_id + 1
@@ -125,6 +128,8 @@ def serve(port):
   file_server = SimpleXMLRPCServer.SimpleXMLRPCServer(('', port))
   file_server.register_introspection_functions()
   sht = SimpleHT()
+  file_server.register_function(sht.count)
+  file_server.register_function(sht.is_alive)
   file_server.register_function(sht.get)
   file_server.register_function(sht.put)
   file_server.register_function(sht.print_content)

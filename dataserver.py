@@ -35,19 +35,23 @@ from sys import argv, exit
 REPLICATION = 2
 
 # Presents a HT interface
-class SimpleHT:
+class DataServer:
   def __init__(self, sid, dataservers):
     self.my_id = sid
-    filename = "datastore_"+str(self.my_id)
+    ds_filename = "datastore_"+str(self.my_id)
     self.dataservers = dataservers
+    # Defining an array of dictionaries called data, which would store the original and redundanct block contents
     self.data = []
     for i in range(REPLICATION):
       print("index", i)
-      self.data.insert(i, shelve.open(filename+"_"+str(i), writeback=True))
+      self.data.insert(i, shelve.open(ds_filename+"_"+str(i), writeback=True))
 
   # An additional param (index) has been used in all supported RPC methods to update corresponding data dictionary
   def count(self, index):
     return len(self.data[index])
+
+  def is_alive(self, msg):
+    return msg
 
   # Retrieve something from the HT
   def get(self, index, key):
@@ -67,24 +71,25 @@ class SimpleHT:
     return True
 
   # Delete something from the HT
-  def delete(self, key):
+  def delete(self, index, key):
     key = key.data
-    if key in self.data:
-      del self.data[key]
+    if key in self.data[index]:
+      del self.data[index][key]
+      self.data[index].sync()
       return True
     else:
       return False
 
-  # Delete something from the HT
+  # Delete all entries of a file i.e. fileid here
   def delete_key_contains(self, key_contains):
     key_contains = key_contains.data
     count = 0
     for i in range(REPLICATION):
       for key in self.data[i].keys():
         if key_contains in key:
-          del self.data[index][key]
-	  self.data[index].sync()
+          del self.data[i][key]
           count = count + 1	
+      self.data[i].sync()
     return count
 
   # Print the contents of the hashtable
@@ -100,20 +105,20 @@ def main():
 # Start the xmlrpc server
 def serve():
   sid = int(argv[1])
-  print("sid:", sid)
   dataservers = []
   for i in range(2, len(argv)):
     dataservers.insert(i-2, int(argv[i]))
  
   file_server = SimpleXMLRPCServer.SimpleXMLRPCServer(('', dataservers[sid]))
   file_server.register_introspection_functions()
-  sht = SimpleHT(sid, dataservers)
-  file_server.register_function(sht.count)
-  file_server.register_function(sht.get)
-  file_server.register_function(sht.put)
-  file_server.register_function(sht.print_content)
-  file_server.register_function(sht.delete)
-  file_server.register_function(sht.delete_key_contains)
+  ds = DataServer(sid, dataservers)
+  file_server.register_function(ds.count)
+  file_server.register_function(ds.is_alive)
+  file_server.register_function(ds.get)
+  file_server.register_function(ds.put)
+  file_server.register_function(ds.print_content)
+  file_server.register_function(ds.delete)
+  file_server.register_function(ds.delete_key_contains)
   file_server.serve_forever()
 
 if __name__ == "__main__":
