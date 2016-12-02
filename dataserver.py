@@ -1,31 +1,4 @@
 #!/usr/bin/env python
-"""
-Author: David Wolinsky
-Version: 0.03
-
-Description:
-The XmlRpc API for this library is:
-  get(base64 key)
-    Returns the value associated with the given key using a dictionary
-      or an empty dictionary if there is no matching key
-    Example usage:
-      rv = rpc.get(Binary("key"))
-      print rv => Binary
-      print rv.data => "value"
-  put(base64 key, base64 value)
-    Inserts the key / value pair into the hashtable, using the same key will
-      over-write existing values
-    Example usage:  rpc.put(Binary("key"), Binary("value"))
-  print_content()
-    Print the contents of the HT
-  read_file(string filename)
-    Store the contents of the Hahelperable into a file
-  write_file(string filename)
-    Load the contents of the file into the Hahelperable
-
-Changelog:
-    0.03 - Modified to remove timeout mechanism for data.
-"""
 
 import sys, SimpleXMLRPCServer, shelve, getopt, pickle, time, threading, xmlrpclib, unittest
 from datetime import datetime, timedelta
@@ -37,9 +10,20 @@ REPLICATION = 2
 # Presents a HT interface
 class DataServer:
   def __init__(self, sid, dataservers):
-    self.my_id = sid
-    ds_filename = "datastore_"+str(self.my_id)
+    self.serv_id = sid
+    ds_filename = "datastore_"+str(self.serv_id)
     self.dataservers = dataservers
+    n = len(dataservers)
+    if self.serv_id == 0:
+      self.prev_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[n-1])) 
+      self.next_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id+1]))
+    elif self.serv_id == n-1:
+      self.prev_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id-1])) 
+      self.next_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[0])) 
+    else:
+      self.prev_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id-1])) 
+      self.next_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id+1])) 
+
     # Defining an array of dictionaries called data, which would store the original and redundanct block contents
     self.data = []
     for i in range(REPLICATION):
@@ -83,6 +67,7 @@ class DataServer:
   # Delete all entries of a file i.e. fileid here
   def delete_key_contains(self, key_contains):
     key_contains = key_contains.data
+    # count to return the number of blocks deleted
     count = 0
     for i in range(REPLICATION):
       for key in self.data[i].keys():
@@ -91,6 +76,40 @@ class DataServer:
           count = count + 1	
       self.data[i].sync()
     return count
+
+  # Corrupt all entries the dictionaries, key containing the fileid (integer)
+  def corrupt_file(self, fileid):
+    # count to return the number of blocks corrupted
+    count = 0
+    corrupt_str = "$Corrupt$FILE$"
+    fileid = str(fileid)+"%%%"
+    for i in range(REPLICATION):
+      for key in self.data[i].keys():
+        if fileid in key:
+	  blk_tuple = pickle.loads(self.data[i][key])
+          blk_data = blk_tuple[0][:6]+corrupt_str+blk_tuple[0][6+len(corrupt_str):]
+	  blk_csum = blk_tuple[1]
+	  blk_info = (blk_data, blk_csum)
+          self.data[i][key] = pickle.dumps(blk_info)
+          count = count + 1	
+      self.data[i].sync()
+    return count
+
+  # Correct the corresponding block, by fetching from its replica
+  def correct(self, index, key):
+    # Remove expired entries
+    d = ""
+    print("Correcting the file: ", key.data)
+    #TODO: Need to handle this check in a better way
+    if index == 0:
+      d = self.next_conn.get(index+1, key) 
+    elif index == 1:
+      d = self.prev_conn.get(index-1, key)
+    if d != "None--Empty":
+      self.data[index][key.data] = d.data
+      self.data[index].sync()
+      return True
+    return False
 
   # Print the contents of the hashtable
   def print_content(self):
@@ -119,6 +138,8 @@ def serve():
   file_server.register_function(ds.print_content)
   file_server.register_function(ds.delete)
   file_server.register_function(ds.delete_key_contains)
+  file_server.register_function(ds.corrupt_file)
+  file_server.register_function(ds.correct)
   file_server.serve_forever()
 
 if __name__ == "__main__":

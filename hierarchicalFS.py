@@ -19,7 +19,7 @@ from time import time
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
-BLOCK_SIZE = 4
+BLOCK_SIZE = 32
 REPLICATION = 2
 
 ''' Class to handle the file content as an array of strings '''
@@ -85,15 +85,17 @@ class Filecontent():
     ''' This function fetches the given index of block from the corresponding data server '''
     def get_block(self, index):	
 	block = -1
+	blk_id = str(self.node_id)+"%%%"+str(index)
 	for i in range(REPLICATION):
 	    dataserver = (self.ds_start_index+i+index)%len(self.ds)
 	    if self.ds[dataserver].is_alive() is True:
-	        d = self.ds[dataserver].get((str(self.node_id)+"%%%"+str(index)), i)
+	        d = self.ds[dataserver].get(blk_id, i)
 	        if (d != "None--Empty"):	        
 		    data = pickle.loads(d.data)
 		    chksum = self.calc_chksum(data[0])	
 		    if chksum != data[1]:
-			print (self.path, " has been corrupted")
+			self.ds[dataserver].correct(blk_id, i)			
+			print ("ALERT--", self.path, " has been corrupted")
 		    else:
 			block = data[0]
 	return block
@@ -232,6 +234,9 @@ class Server():
 
     def delete_key_contains(self, key):
 	return self.connection.delete_key_contains(Binary(key))
+
+    def correct(self, key, i):
+	return self.connection.correct(i, Binary(key))
 
     def get_new_fd(self):		
 	return self.connection.get_new_fd()
