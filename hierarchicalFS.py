@@ -45,11 +45,12 @@ class Filecontent():
 	pos = offset%BLOCK_SIZE
 	while (len(data) > 0):
 	    current_content = self.get_block(blk_index) 
+	    print("Current content is ", current_content)
 	    if (current_content == -1): 
 		current_content =  ""
 	    if(data == '\x00' and offset < self.file_size):
         	self.set_block(blk_index, current_content[:pos] + data)
-		for i in range(blk_index+1, self.num_blocks): # TODO: Delete remaining blocks from other servers
+		for i in range(blk_index+1, self.num_blocks): 
 		    self.delete_block(i)
 		break
 	    self.set_block(blk_index, (current_content[:pos] + data[:BLOCK_SIZE-pos] + current_content[pos+len(data):]))
@@ -95,7 +96,7 @@ class Filecontent():
 		    chksum = self.calc_chksum(data[0])	
 		    if chksum != data[1]:
 			self.ds[dataserver].correct(blk_id, i)			
-			print ("ALERT--", self.path, " has been corrupted")
+			print ("!! ALERT -", self.path, "has been corrupted at block#", index)
 		    else:
 			block = data[0]
 	return block

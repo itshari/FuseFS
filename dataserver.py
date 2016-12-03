@@ -1,17 +1,29 @@
 #!/usr/bin/env python
 
-import sys, SimpleXMLRPCServer, shelve, getopt, pickle, time, threading, xmlrpclib, unittest
+import os, sys, copy, SimpleXMLRPCServer, shelve, getopt, pickle, time, threading, xmlrpclib, unittest, socket
 from datetime import datetime, timedelta
 from xmlrpclib import Binary
 from sys import argv, exit
 
 REPLICATION = 2
 
+def is_server_alive(connection):
+  msg = 12345
+  res = -1
+  try:
+    res = connection.is_alive(msg)
+    if res == msg:
+      return True
+  except socket.error:
+    print "Server is down!"
+  return False
+
 # Presents a HT interface
 class DataServer:
   def __init__(self, sid, dataservers):
     self.serv_id = sid
-    ds_filename = "datastore_"+str(self.serv_id)
+    serv_port = dataservers[int(sid)]
+    ds_filename = "datastore_"+str(serv_port)
     self.dataservers = dataservers
     n = len(dataservers)
     if self.serv_id == 0:
@@ -24,11 +36,27 @@ class DataServer:
       self.prev_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id-1])) 
       self.next_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[self.serv_id+1])) 
 
-    # Defining an array of dictionaries called data, which would store the original and redundanct block contents
+    # Defining an array of dictionaries called data, which would store the original and redundant block contents
     self.data = []
     for i in range(REPLICATION):
-      print("index", i)
-      self.data.insert(i, shelve.open(ds_filename+"_"+str(i), writeback=True))
+      dsfile = ds_filename+"_"+str(i)
+      d = None
+      msg = "Testing"
+      if os.path.isfile(dsfile) is False and is_server_alive(self.next_conn) and is_server_alive(self.prev_conn):
+	if i == 0:
+	  d = self.next_conn.get_dict(1) 
+        elif i == 1:
+	  d = self.prev_conn.get_dict(0)
+        if d is not None:
+	  self.data.insert(i, shelve.open(dsfile, writeback=True))
+	  d = d.data
+	  d = pickle.loads(d)
+	  for key in d.keys():
+	    self.data[i][key] = d[key]
+	  self.data[i].sync()
+      else:
+	self.data.insert(i, shelve.open(dsfile, writeback=True))
+      
 
   # An additional param (index) has been used in all supported RPC methods to update corresponding data dictionary
   def count(self, index):
@@ -79,21 +107,20 @@ class DataServer:
 
   # Corrupt all entries the dictionaries, key containing the fileid (integer)
   def corrupt_file(self, fileid):
-    # count to return the number of blocks corrupted
-    count = 0
     corrupt_str = "$Corrupt$FILE$"
-    fileid = str(fileid)+"%%%"
+    file_str = str(fileid)+"%%%"
     for i in range(REPLICATION):
       for key in self.data[i].keys():
-        if fileid in key:
+        if file_str in key:
 	  blk_tuple = pickle.loads(self.data[i][key])
           blk_data = blk_tuple[0][:6]+corrupt_str+blk_tuple[0][6+len(corrupt_str):]
 	  blk_csum = blk_tuple[1]
 	  blk_info = (blk_data, blk_csum)
-          self.data[i][key] = pickle.dumps(blk_info)
-          count = count + 1	
-      self.data[i].sync()
-    return count
+          self.data[i][key] = pickle.dumps(blk_info)	
+      	  self.data[i].sync()
+	  print "!! ALERT - File corrupted - fileId :", fileid, "and block# :", key.split(file_str)[1]
+	  return True
+    return False
 
   # Correct the corresponding block, by fetching from its replica
   def correct(self, index, key):
@@ -118,6 +145,15 @@ class DataServer:
       print self.data[i]
     return True
 
+  # Share complete dictionary (index) with adjacent servers
+  def get_dict(self, index):
+    print("Sharing the dictionary", index)
+    print self.data[index]
+    d = dict(self.data[index])
+    res = Binary(pickle.dumps(d))
+    return res
+
+
 def main():
   serve()
 
@@ -140,6 +176,7 @@ def serve():
   file_server.register_function(ds.delete_key_contains)
   file_server.register_function(ds.corrupt_file)
   file_server.register_function(ds.correct)
+  file_server.register_function(ds.get_dict)
   file_server.serve_forever()
 
 if __name__ == "__main__":
