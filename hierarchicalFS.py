@@ -30,7 +30,7 @@ class Filecontent():
 	    self.node_id = node.node_id 
 	    self.file_size = node.metadata['st_size']        
 	    self.ds = ds
-	    self.ds_start_index = hash(self.path)%len(self.ds)
+	    self.ds_start_index = hash("Salt"+str(self.node_id))%len(self.ds)
 	    self.num_blocks = int(math.ceil(self.file_size/BLOCK_SIZE)) 
 	else:
 	    print("No such file exists!")
