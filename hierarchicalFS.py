@@ -19,12 +19,13 @@ from time import time
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
-BLOCK_SIZE = 32
+BLOCK_SIZE = 8
 REPLICATION = 2
 
 ''' Class to handle the file content as an array of strings '''
 class Filecontent():
     def __init__(self, node, ds):
+	print ("at init of Filecontent")
 	if node != -1:
             self.path = node.path
 	    self.node_id = node.node_id 
@@ -39,16 +40,18 @@ class Filecontent():
 
     ''' This function traverses through the blocks and writes the given data at the particular offset '''
     def write_into_blocks(self, data, offset): 
+	print ("at writeintoblocks of Filecontent")
 	while any((d.is_alive() is False) for d in self.ds):	
 	    pass	
 	blk_index = offset//BLOCK_SIZE
 	pos = offset%BLOCK_SIZE
+	print ("printing blk_index:",blk_index,'printing pos:',pos)
 	while (len(data) > 0):
 	    current_content = self.get_block(blk_index) 
-	    print("Current content is ", current_content)
+	    print("*********************Current content is ", current_content)
 	    if (current_content == -1): 
 		current_content =  ""
-	    if(data == '\x00' and offset < self.file_size):
+	    if(data == '\x00' and offset < self.file_size): 
         	self.set_block(blk_index, current_content[:pos] + data)
 		for i in range(blk_index+1, self.num_blocks): 
 		    self.delete_block(i)
@@ -60,6 +63,7 @@ class Filecontent():
 
     ''' This function traverses through the blocks and reads the given size of data from a particular offset '''
     def read_from_blocks(self, offset, size):
+	print ("at readfromblocks in Filecontent")
 	blk_index = offset//BLOCK_SIZE
 	pos = offset%BLOCK_SIZE
 	file_cont = ""
@@ -72,6 +76,7 @@ class Filecontent():
 
     ''' This function returns the file size as well as the full file content used for debugging '''
     def get_file_size(self):
+	
 	size = 0
 	cont = ""
 	i = 0
@@ -85,6 +90,7 @@ class Filecontent():
 
     ''' This function fetches the given index of block from the corresponding data server '''
     def get_block(self, index):	
+	print ("at getblock of Filecontent")
 	block = -1
 	blk_id = str(self.node_id)+"%%%"+str(index)
 	for i in range(REPLICATION):
@@ -94,15 +100,17 @@ class Filecontent():
 	        if (d != "None--Empty"):	        
 		    data = pickle.loads(d.data)
 		    chksum = self.calc_chksum(data[0])	
-		    if chksum != data[1]:
-			self.ds[dataserver].correct(blk_id, i)			
+		    if chksum != data[1]:  
+			self.ds[dataserver].correct(blk_id, i)  
 			print ("!! ALERT -", self.path, "has been corrupted at block#", index)
 		    else:
+			print("checksum verified")
 			block = data[0]
 	return block
 	
     ''' This function updates the given index of block in the corresponding data server '''
     def set_block(self, index, block_data):  
+	print ("at set_block of Filecontent")
 	chksum = self.calc_chksum(block_data)
 	data = (block_data, chksum)	
 	for i in range(REPLICATION):
@@ -110,15 +118,18 @@ class Filecontent():
  
     ''' This function deletes the given index of block from the corresponding data server '''
     def delete_block(self, index):
+	print ("at delete_block of Filecontent")
 	for i in range(REPLICATION):	
 	    return self.ds[(self.ds_start_index+i+index)%len(self.ds)].delete((str(self.node_id)+"%%%"+str(index)), i) 
 	
     ''' This function deletes the given file from all data servers '''
     def delete_file(self):
+	print('at delete_file of Filecontent')
 	for ds in self.ds:
 	    ds.delete_key_contains(str(self.node_id)+"%%%")	
 
     def calc_chksum(self, block_data):
+	print ("ATTTTT CHECKSUMMM")
         m = hashlib.md5()
 	m.update(block_data)
 	return m.hexdigest() 
@@ -127,26 +138,39 @@ class Filecontent():
 ''' A class to represent any node (file/directory) present in the filesystem'''
 class Node():
 
-    def __init__(self, path, nodetype, metadata, node_id):        
+    def __init__(self, path, nodetype, metadata, node_id):  
+	print ("at init of NODE")      
 	self.path = path
         self.children = []
 	self.nodetype = nodetype
         self.metadata = metadata
 	self.node_id = node_id
+
+
+    def print_node(self):
+	print("PRINTING CONTENTS OF NODE  :")
+	print ('path:', self.path)
+	print('children:',self.children)
+	print ('nodetype:',self.nodetype)
+	print('metadata:',self.metadata)
+	print('node_id:',self.node_id)
 	
     ''' Inserts given child into the list of children of a node'''
     def add_child(self, child):
+	print ("at addchild of NODE")  
         if self.nodetype == 0:
 	    return self.children.append(child)
 
     ''' Deletes given child from the node's list of children'''
     def del_child(self,child):
+	print ("at del_child of NODE")  
 	if self.nodetype == 0:
 	    return self.children.remove(child)
 
 class Filesystem():
 
     def __init__(self, ms):
+	print ("at init of Filesystem")  
 	self.ms = ms        
 	now = time()
         metadata = dict(st_mode=(S_IFDIR | 0o755), st_ctime=now,
@@ -158,20 +182,28 @@ class Filesystem():
 	if (self.get_node(path) == -1):
 	    self.add_node(root_node)
 
-    def get_node(self, path):		
+	
+
+    def get_node(self, path):	
+	print ("at get_node of NODE")  	
 	node = self.ms.get(path)
 	if node == "None--Empty": 	    
 	    print("File or directory not found: ", path)
+	   # print ("printing after getting", node) #added
 	    return -1
 	else:
 	    node = pickle.loads(node.data)
+	    #print ("printing after getting", node)#added
 	    return node
 	    
     def add_node(self, node):
+	print ("at add_node of NODE")  
 	path = node.path
 	self.ms.put(path, pickle.dumps(node))
+	#print ("printing after getting", node)#added
 
-    def del_node(self, path):	
+    def del_node(self, path):
+	print ('at del_node of Filesystem')	
 	return self.ms.delete(path)
 
     ''' A member function to propagate the parent directory name change to all its children '''
@@ -205,6 +237,7 @@ class Server():
 	self.connection = xmlrpclib.ServerProxy('http://localhost:'+port)
 
     def is_alive(self):
+	print ("at is_alive of Server")
 	msg = 12345
 	res = -1
 	try:
@@ -216,39 +249,47 @@ class Server():
 	return False
 
     def put(self, key, value, i=None):	
+	print("at put of Server")
 	if i is None:
 	    return self.connection.put(Binary(key), Binary(value))
 	else:
 	    return self.connection.put(i, Binary(key), Binary(value))
 
-    def get(self, key, i=None):		
+    def get(self, key, i=None):	
+	print("at get of Server")	
 	if i is None:
 	    return self.connection.get(Binary(key))
 	else:
 	    return self.connection.get(i, Binary(key))
 
     def delete(self, key, i=None):	
+	print("at delete of Server")
 	if i is None:
 	    return self.connection.delete(Binary(key))
 	else:
 	    return self.connection.delete(i, Binary(key))
 
     def delete_key_contains(self, key):
+	print("at delete_key_contains of Server")
 	return self.connection.delete_key_contains(Binary(key))
 
     def correct(self, key, i):
+	print("at correct of Server")
 	return self.connection.correct(i, Binary(key))
 
-    def get_new_fd(self):		
+    def get_new_fd(self):
+	print("at get_new_fd of Server")		
 	return self.connection.get_new_fd()
 
-    def get_new_id(self):	
+    def get_new_id(self):
+	print("at get_new_id of Server")	
 	return self.connection.get_new_id()
     
 	      
 class Memory(LoggingMixIn, Operations):
 
     def __init__(self):
+	print (" at init of Memory")
 	self.ms = Server(argv[2])
 	self.fs = Filesystem(self.ms)
 	self.ds = []
@@ -269,11 +310,12 @@ class Memory(LoggingMixIn, Operations):
 	self.fs.add_node(node)
 
     def create(self, path, mode):  
+	print ("at create of Memory")
 	metadata = dict(st_mode=(S_IFREG | mode), st_nlink=1,
                                 st_size=0, st_ctime=time(), st_mtime=time(),
                                 st_atime=time())
 	node_id = self.ms.get_new_id()
-	new_file = Node(path, 1, metadata, node_id)
+	new_file = Node(path, 1, metadata, node_id) # 1 represents a file 0 represents a directory
 	parent_path, file_name = split_parent_and_file(path)
 	self.fs.add_node(new_file)
 	parent_node = self.fs.get_node(parent_path)
@@ -282,6 +324,7 @@ class Memory(LoggingMixIn, Operations):
         return self.ms.get_new_fd()
 
     def getattr(self, path, fh=None):
+	print ("at getattr of Memory")
 	node = self.fs.get_node(path) 
 	print("Path: ", path, " Node:", node)
 	if (node == -1) :
@@ -300,11 +343,12 @@ class Memory(LoggingMixIn, Operations):
         return attrs.keys()
 
     def mkdir(self, path, mode): 
+	print ("at mkdir of Memory")
         metadata = dict(st_mode=(S_IFDIR | mode), st_nlink=2,
                                st_size=0, st_ctime=time(), st_mtime=time(),
                                 st_atime=time())
 	node_id = self.ms.get_new_id()
-	node = Node(path, 0, metadata, node_id)	
+	node = Node(path, 0, metadata, node_id)	# 0 represents a directory
 	parent_path, file_name = split_parent_and_file(path)
 	self.fs.add_node(node)
 	parent_node = self.fs.get_node(parent_path)
@@ -316,13 +360,17 @@ class Memory(LoggingMixIn, Operations):
 	return self.ms.get_new_fd()
 
     def read(self, path, size, offset, fh):
-	node = self.fs.get_node(path)	
+	print ("at read of Memory")
+	node = self.fs.get_node(path)
+	print node.print_node()	
 	if node.nodetype == 1:
 	    filecontent = Filecontent(node, self.ds)   
             return filecontent.read_from_blocks(offset, size)
  
     def readdir(self, path, fh): 
+	print ("at readdir of Memory")
 	node = self.fs.get_node(path)
+        node.print_node()
         return ['.','..'] + [split_parent_and_file(x)[1] for x in node.children]
 
     def readlink(self, path):
@@ -341,7 +389,8 @@ class Memory(LoggingMixIn, Operations):
         except KeyError:
             pass        # Should return ENOATTR
 
-    def rename(self, old, new): # TODO         
+    def rename(self, old, new): # TODO       
+	print ("at rename of Memory")  
 	old_parent_path = split_parent_and_file(old)[0]
 	new_parent_path = split_parent_and_file(new)[0]
 
@@ -365,6 +414,7 @@ class Memory(LoggingMixIn, Operations):
 	self.fs.del_node(old)		
 
     def rmdir(self, path): # TODO
+	print ("at rmdir of Memeory")
 	node = self.fs.get_node(path)	
 	if len(node.children) > 0:
 	    print("Trying to delete a non-empty directory: ", path)
@@ -444,6 +494,7 @@ class Memory(LoggingMixIn, Operations):
 	self.fs.add_node(node)
 
     def write(self, path, data, offset, fh):
+	print ("at write of Memory")
 	node = self.fs.get_node(path)	
 	filecontent = Filecontent(node, self.ds)
 	filecontent.write_into_blocks(data, offset)
