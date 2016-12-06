@@ -8,6 +8,7 @@ from sys import argv, exit
 REPLICATION = 2
 
 def is_server_alive(connection):
+  print ('at is_server_alive of dataserver.py')
   msg = 12345
   res = -1
   try:
@@ -20,11 +21,14 @@ def is_server_alive(connection):
 
 # Presents a HT interface
 class DataServer:
+
   def __init__(self, sid, dataservers):
+    print ('at init of Dataserver with id',int(sid))
     self.serv_id = sid
     serv_port = dataservers[int(sid)]
     ds_filename = "datastore_"+str(serv_port)
     self.dataservers = dataservers
+    #print("printing dataservers list:",dataservers)
     n = len(dataservers)
     if self.serv_id == 0:
       self.prev_conn = xmlrpclib.ServerProxy('http://localhost:'+str(dataservers[n-1])) 
@@ -63,10 +67,12 @@ class DataServer:
     return len(self.data[index])
 
   def is_alive(self, msg):
+    print('at is_alive in dataserver.py')
     return msg
 
   # Retrieve something from the HT
   def get(self, index, key):
+    print ('at get () in dataserver.py')
     # Default return value
     rv = "None--Empty"
     # If the key is in the data structure, return properly formated results
@@ -78,12 +84,14 @@ class DataServer:
   # Insert something into the HT
   def put(self, index, key, value):
     # Remove expired entries
+    print ('at put () in dataserver.py')
     self.data[index][key.data] = value.data
     self.data[index].sync()
     return True
 
   # Delete something from the HT
   def delete(self, index, key):
+    print ('at delete () in dataserver.py')
     key = key.data
     if key in self.data[index]:
       del self.data[index][key]
@@ -94,6 +102,7 @@ class DataServer:
 
   # Delete all entries of a file i.e. fileid here
   def delete_key_contains(self, key_contains):
+    print ('at get_key_contains () in dataserver.py')
     key_contains = key_contains.data
     # count to return the number of blocks deleted
     count = 0
@@ -107,6 +116,7 @@ class DataServer:
 
   # Corrupt all entries the dictionaries, key containing the fileid (integer)
   def corrupt_file(self, fileid):
+    print ('at corrupt_file () in dataserver.py')
     corrupt_str = "$Corrupt$FILE$"
     file_str = str(fileid)+"%%%"
     for i in range(REPLICATION):
@@ -124,6 +134,7 @@ class DataServer:
 
   # Correct the corresponding block, by fetching from its replica
   def correct(self, index, key):
+    print ('at correct () in dataserver.py')
     # Remove expired entries
     d = ""
     print("Correcting the file: ", key.data)
@@ -140,6 +151,7 @@ class DataServer:
 
   # Print the contents of the hashtable
   def print_content(self):
+    print ('at print_content () in dataserver.py')
     for i in range(REPLICATION):
       print("Content in Dictionary ", i)
       print self.data[i]
@@ -152,6 +164,11 @@ class DataServer:
     d = dict(self.data[index])
     res = Binary(pickle.dumps(d))
     return res
+  
+  def terminate(self):
+    global quit
+    quit=1
+    return 1
 
 
 def main():
@@ -169,6 +186,7 @@ def serve():
   ds = DataServer(sid, dataservers)
   file_server.register_function(ds.count)
   file_server.register_function(ds.is_alive)
+  file_server.register_function(ds.terminate)
   file_server.register_function(ds.get)
   file_server.register_function(ds.put)
   file_server.register_function(ds.print_content)
