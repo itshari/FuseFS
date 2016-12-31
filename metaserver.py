@@ -13,6 +13,7 @@ class Node():
     self.nodetype = nodetype
     self.metadata = metadata
     self.node_id = node_id
+    self.blocks_version = []
 
 # Presents a HT interface
 class MetaServer:
@@ -75,6 +76,12 @@ class MetaServer:
   def print_content(self):
     print self.data
     return True
+ 
+  def print_node(self, path): 
+   if path in self.data:
+      node = pickle.loads(self.data[path])
+      print(path)
+      print(node.blocks_version)
 
 def main():
   port = int(argv[1])
@@ -90,6 +97,7 @@ def serve(port):
   file_server.register_function(ms.get)
   file_server.register_function(ms.put)
   file_server.register_function(ms.print_content)
+  file_server.register_function(ms.print_node)
   file_server.register_function(ms.delete)
   file_server.register_function(ms.get_new_id)
   file_server.register_function(ms.get_node_id)

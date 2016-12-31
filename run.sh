@@ -1,4 +1,5 @@
 #!/bin/bash
+rm -rf datastore_*
 x-terminal-emulator -e python metaserver.py 2222
 sleep 2
 x-terminal-emulator -e python dataserver.py 0 3333 4444 5555 6666

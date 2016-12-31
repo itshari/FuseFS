@@ -26,7 +26,8 @@ REPLICATION = 2
 class Filecontent():
     def __init__(self, node, ds):
 	if node != -1:
-            self.path = node.path
+	    self.path = node.path
+	    self.node = node
 	    self.node_id = node.node_id 
 	    self.file_size = node.metadata['st_size']        
 	    self.ds = ds
@@ -39,24 +40,46 @@ class Filecontent():
 
     ''' This function traverses through the blocks and writes the given data at the particular offset '''
     def write_into_blocks(self, data, offset): 
-	while any((d.is_alive() is False) for d in self.ds):	
-	    pass	
+	#while any((d.is_alive() is False) for d in self.ds):	
+	#    pass	
 	blk_index = offset//BLOCK_SIZE
+	start_blk = blk_index
+	end_blk = blk_index
 	pos = offset%BLOCK_SIZE
+	revert = False 
 	while (len(data) > 0):
 	    current_content = self.get_block(blk_index) 
-	    print("Current content is ", current_content)
+	    end_blk = blk_index
 	    if (current_content == -1): 
 		current_content =  ""
 	    if(data == '\x00' and offset < self.file_size):
         	self.set_block(blk_index, current_content[:pos] + data)
 		for i in range(blk_index+1, self.num_blocks): 
-		    self.delete_block(i)
+		    self.delete_block(i, self.node.blocks_version[i])
 		break
-	    self.set_block(blk_index, (current_content[:pos] + data[:BLOCK_SIZE-pos] + current_content[pos+len(data):]))
+	    response = self.set_block(blk_index, (current_content[:pos] + data[:BLOCK_SIZE-pos] + current_content[pos+len(data):]))
+	    if response is False:
+		revert = True
+		break
 	    data = data[BLOCK_SIZE-pos:]
 	    blk_index = blk_index + 1
 	    pos = 0
+	print("Revert is: ", revert)
+	i = start_blk
+	if revert is True:
+	    print(i, " :::: ",end_blk)
+	    while i <= end_blk:
+		print("DELETING BLOCK!")
+		self.delete_block(i, self.node.blocks_version[i]+1)
+		i = i + 1
+		return False
+	else:
+	    print(start_blk, end_blk, len(self.node.blocks_version))
+	    while i <= end_blk:
+		if i < len(self.node.blocks_version):
+		    self.node.blocks_version[i] = self.node.blocks_version[i]+1
+		i = i + 1
+	    return True
 
     ''' This function traverses through the blocks and reads the given size of data from a particular offset '''
     def read_from_blocks(self, offset, size):
@@ -86,7 +109,9 @@ class Filecontent():
     ''' This function fetches the given index of block from the corresponding data server '''
     def get_block(self, index):	
 	block = -1
-	blk_id = str(self.node_id)+"%%%"+str(index)
+	if (index >= len(self.node.blocks_version)):
+	    return block
+	blk_id = str(self.node_id)+"%%%"+str(index)+"%%%"+str(self.node.blocks_version[index])
 	for i in range(REPLICATION):
 	    dataserver = (self.ds_start_index+i+index)%len(self.ds)
 	    if self.ds[dataserver].is_alive() is True:
@@ -104,19 +129,39 @@ class Filecontent():
     ''' This function updates the given index of block in the corresponding data server '''
     def set_block(self, index, block_data):  
 	chksum = self.calc_chksum(block_data)
-	data = (block_data, chksum)	
+	data = (block_data, chksum)
+	if index >= len(self.node.blocks_version):
+	    self.node.blocks_version.append(0)
+	version = self.node.blocks_version[index] + 1
+	i = 0
+	flag = False
 	for i in range(REPLICATION):
-  	    self.ds[(self.ds_start_index+i+index)%len(self.ds)].put((str(self.node_id)+"%%%"+str(index)), pickle.dumps(data), i)
+	    print("Requesting: ", (str(self.node_id)+"%%%"+str(index)+"%%%"+str(version)))
+	    server_id = (self.ds_start_index+i+index)%len(self.ds)
+	    if self.ds[server_id].is_alive() is True:
+  	    	self.ds[server_id].put((str(self.node_id)+"%%%"+str(index)+"%%%"+str(version)), pickle.dumps(data), i)
+	    else:
+		flag = True
+		break
+	if flag is True:
+	    return False
+	else:
+	    return True
+	    
  
     ''' This function deletes the given index of block from the corresponding data server '''
-    def delete_block(self, index):
+    def delete_block(self, index, version):
+	#print("^^^^^^^^^ Deleting this file: ", (str(self.node_id)+"%%%"+str(index)+"%%%"+str(version))	
 	for i in range(REPLICATION):	
-	    return self.ds[(self.ds_start_index+i+index)%len(self.ds)].delete((str(self.node_id)+"%%%"+str(index)), i) 
+	    server_id = (self.ds_start_index+i+index)%len(self.ds)
+	    if self.ds[server_id].is_alive() is True:	    
+		return self.ds[server_id].delete((str(self.node_id)+"%%%"+str(index)+"%%%"+str(version)), i) 
 	
     ''' This function deletes the given file from all data servers '''
     def delete_file(self):
 	for ds in self.ds:
-	    ds.delete_key_contains(str(self.node_id)+"%%%")	
+	    if ds.is_alive() is True:
+		ds.delete_key_contains(str(self.node_id)+"%%%")	
 
     def calc_chksum(self, block_data):
         m = hashlib.md5()
@@ -133,6 +178,8 @@ class Node():
 	self.nodetype = nodetype
         self.metadata = metadata
 	self.node_id = node_id
+	self.blocks_version = []
+	self.exists = False
 	
     ''' Inserts given child into the list of children of a node'''
     def add_child(self, child):
@@ -196,7 +243,7 @@ def split_parent_and_file(path):
     parent_path, file_name = path.rsplit('/', 1)
     if parent_path == '':
 	parent_path = '/'
-    return parent_path, file_name
+    return parent_path, file_name 
 
 class Server(): 
 
@@ -283,7 +330,6 @@ class Memory(LoggingMixIn, Operations):
 
     def getattr(self, path, fh=None):
 	node = self.fs.get_node(path) 
-	print("Path: ", path, " Node:", node)
 	if (node == -1) :
             raise FuseOSError(ENOENT)	
         return node.metadata
@@ -446,8 +492,8 @@ class Memory(LoggingMixIn, Operations):
     def write(self, path, data, offset, fh):
 	node = self.fs.get_node(path)	
 	filecontent = Filecontent(node, self.ds)
-	filecontent.write_into_blocks(data, offset)
-        node.metadata['st_size'] = filecontent.get_file_size()[0]
+	res = filecontent.write_into_blocks(data, offset)
+	node.metadata['st_size'] = filecontent.get_file_size()[0]
 	self.fs.add_node(node)
         return len(data)
 
